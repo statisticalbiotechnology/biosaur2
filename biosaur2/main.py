@@ -531,26 +531,34 @@ def process_file(args):
                 counter_hills_idx = Counter(hills_dict['hills_idx_array'])
                 min_length_hill = args['minlh']
 
-
-                tmp_hill_length = np.array([counter_hills_idx[hill_idx] for hill_idx in hills_dict['hills_idx_array']])
+                # one mass difference per hill link: keep those of hills reaching minlh
+                tmp_hill_length = np.array([counter_hills_idx[hill_idx] for hill_idx in hills_dict['mass_diff_hill_idx']], dtype=int)
                 idx_minl = tmp_hill_length >= min_length_hill
                 total_mass_diff = total_mass_diff[idx_minl]
+                del hills_dict
 
 
                 true_md = np.array(total_mass_diff)
 
+            if args['use_hill_calib'] and len(true_md) < 100:
+                logger.warning('Too few hill mass differences (%d) for -use_hill_calib; keeping htol = %.3f ppm', len(true_md), args['htol'])
+            elif args['use_hill_calib']:
+
                 mass_left = -min(true_md)
                 mass_right = max(true_md)
-                mass_shift, mass_sigma, covvalue = utils.calibrate_mass(0.05, mass_left, mass_right, true_md)
-                if abs(mass_shift) >= max(mass_left, mass_right):
-                    mass_shift, mass_sigma, covvalue = utils.calibrate_mass(0.25, mass_left, mass_right, true_md)
-                if np.isinf(covvalue):
+                try:
                     mass_shift, mass_sigma, covvalue = utils.calibrate_mass(0.05, mass_left, mass_right, true_md)
+                    if abs(mass_shift) >= max(mass_left, mass_right):
+                        mass_shift, mass_sigma, covvalue = utils.calibrate_mass(0.25, mass_left, mass_right, true_md)
+                    if np.isinf(covvalue):
+                        mass_shift, mass_sigma, covvalue = utils.calibrate_mass(0.05, mass_left, mass_right, true_md)
+                except RuntimeError:
+                    logger.warning('Hill mass error fit failed; keeping htol = %.3f ppm', args['htol'])
+                else:
+                    logger.debug('Hill mass shift %.3f ppm, sigma %.3f ppm', mass_shift, mass_sigma)
+                    args['htol'] = min(args['htol'], 3 * mass_sigma)
 
-                print(mass_shift, mass_sigma)
-                args['htol'] = min(args['htol'], 3 * mass_sigma)
-
-                logger.info('Automatically optimized htol parameter: %.3f ppm', args['htol'])
+                    logger.info('Automatically optimized htol parameter: %.3f ppm', args['htol'])
 
             # Fast paths (biosaur2.fastpath / cfast) give results identical to the
             # original functions and fall back to them when their preconditions fail.
@@ -572,7 +580,7 @@ def process_file(args):
                 if hills_dict is None:
                     hills_dict, _ = detect_hills(data_for_analyse_tmp, args, mz_step, paseftol, md_correction_int=md_correction_int)
                     # never read downstream (utils.filter_hills is unused)
-                    for k in ('mzs_array', 'intensity_array', 'im_array'):
+                    for k in ('mzs_array', 'intensity_array', 'im_array', 'mass_diff_hill_idx'):
                         hills_dict.pop(k, None)
 
                 logger.info('Detected number of hills before splitting: %d', len(np.unique(np.asarray(hills_dict['hills_idx_array']))))

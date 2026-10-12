@@ -808,6 +808,8 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
 
     total_num_hills = []
     total_mass_diff = []
+    # hill of each total_mass_diff entry (stored as hills_dict['mass_diff_hill_idx'])
+    mass_diff_hill_idx = []
 
     for spec_idx, z in enumerate(data_for_analyse_tmp):
 
@@ -888,12 +890,14 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
                 if best_idx_prev != 0:
                     banned_prev_idx_set.add(best_idx_prev)
                     total_mass_diff.append(best_mass_diff_with_sign)
+                    mass_diff_hill_idx.append(hills_dict['hills_idx_array'][last_idx+1+idx])
 
 
         prev_fast_dict = fast_dict
         prev_idx = last_idx
         last_idx = last_idx+len_mz
 
+    hills_dict['mass_diff_hill_idx'] = mass_diff_hill_idx
     return hills_dict, total_mass_diff
 
 
