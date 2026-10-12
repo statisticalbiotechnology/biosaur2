@@ -484,8 +484,6 @@ def process_file(args):
             for z in data_for_analyse:
                 if not faims_val or z['FAIMS compensation voltage'] == faims_val:
                     data_for_analyse_tmp.append(z)
-                    RT_dict[data_cur_id] = float(z['scanList']['scan'][0]['scan start time'])
-                    data_cur_id += 1
 
             hill_mass_accuracy = args['htol']
             if stream_mz_step is not None:
@@ -505,6 +503,11 @@ def process_file(args):
             #Process profile
             if args['profile']:
                 data_for_analyse_tmp = utils.process_profile(data_for_analyse_tmp)
+
+            # scan index -> RT, for the spectra that are left (-tof drops spectra)
+            for z in data_for_analyse_tmp:
+                RT_dict[data_cur_id] = float(z['scanList']['scan'][0]['scan start time'])
+                data_cur_id += 1
 
             #Process ion mobility
 

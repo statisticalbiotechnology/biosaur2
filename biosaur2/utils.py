@@ -439,8 +439,10 @@ def process_tof(data_for_analyse_tmp, noise_factor):
 
     #for the missing bins, we will use the avergae threshold of the two closest bins
     bins = sorted(universal_dict.keys())
-    n = bins[1]
-    while n < bins[-1]:
+    if len(bins) < 2:
+        logger.warning('TOF noise thresholds determined for %d m/z bin(s) only; default threshold (150) elsewhere', len(bins))
+    n = bins[1] if len(bins) >= 2 else 0
+    while len(bins) >= 2 and n < bins[-1]:
         if n not in universal_dict:
             #previous should always exist, but next might not exist, so we will use the closest bin to the right
             next_bin = [b for b in bins if b > n][0]
