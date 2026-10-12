@@ -505,8 +505,8 @@ def filter_ms1_spectrum(z, min_intensity, min_mz, max_mz):
     z['intensity array'] = z['intensity array'][idx]
     z['mean inverse reduced ion mobility array'] = z['mean inverse reduced ion mobility array'][idx]
 
-    # sort by m/z
-    idx = np.argsort(z['m/z array'])
+    # sort by m/z (stable: equal m/z values keep their order in the file)
+    idx = np.argsort(z['m/z array'], kind='stable')
     z['m/z array'] = z['m/z array'][idx]
     z['intensity array'] = z['intensity array'][idx]
     z['mean inverse reduced ion mobility array'] = z['mean inverse reduced ion mobility array'][idx]
@@ -804,7 +804,7 @@ def process_mzml_dia(args):
             z['intensity array'] = z['intensity array'][idx]
             z['mean inverse reduced ion mobility array'] = z['mean inverse reduced ion mobility array'][idx]
 
-            idx = np.argsort(z['m/z array'])
+            idx = np.argsort(z['m/z array'], kind='stable')
             z['m/z array'] = z['m/z array'][idx]
             z['intensity array'] = z['intensity array'][idx]
             z['mean inverse reduced ion mobility array'] = z['mean inverse reduced ion mobility array'][idx]

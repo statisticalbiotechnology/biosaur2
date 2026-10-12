@@ -477,7 +477,11 @@ def centroid_pasef_scan(dict scandict, float mz_step, float hill_mz_accuracy, fl
     ion_mobility_ar_fast = (ion_mobility_ar/ion_mobility_step).astype(int)
     mz_ar_fast = (mz_ar/mz_step).astype(int)
 
-    idx = np.argsort(mz_ar_fast)
+    # m/z bins ascending, descending m/z within a bin.  The walk below depends on
+    # this order; np.argsort(mz_ar_fast) used to leave it to the sort algorithm
+    # (for m/z-sorted input mostly descending, CPU/numpy dependent).  Ascending
+    # m/z within a bin loses ~5% of the precursors on timsTOF data.
+    idx = np.lexsort((-mz_ar, mz_ar_fast))
     mz_ar_fast = mz_ar_fast[idx]
     ion_mobility_ar_fast = ion_mobility_ar_fast[idx]
 
@@ -782,7 +786,8 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
         hills_dict['orig_idx_array'].extend(range(len_mz))
         hills_dict['scan_idx_array'].extend([spec_idx] * len_mz)
 
-        idx_for_sort = np.argsort(z['intensity array'])[::-1]
+        # descending intensity, equal intensities in peak (m/z) order
+        idx_for_sort = np.argsort(-z['intensity array'], kind='stable')
 
         mz_sorted = z['m/z array'][idx_for_sort]
         basic_id_sorted = list(np.array(range(len_mz))[idx_for_sort])
@@ -903,7 +908,8 @@ def process_hills(dict hills_dict, list data_for_analyse_tmp, float mz_step, flo
 
     if len(hills_dict['hills_idx_array']):
 
-        idx_sort = np.argsort(hills_dict['hills_idx_array'] + (hills_dict['scan_idx_array'] / (hills_dict['scan_idx_array'].max()+1)))
+        # by hill, then scan; stable for (hill, scan) duplicates
+        idx_sort = np.lexsort((hills_dict['scan_idx_array'], hills_dict['hills_idx_array']))
         hills_dict['hills_idx_array'] = hills_dict['hills_idx_array'][idx_sort]
         hills_dict['scan_idx_array'] = hills_dict['scan_idx_array'][idx_sort]
         hills_dict['orig_idx_array'] = hills_dict['orig_idx_array'][idx_sort]
