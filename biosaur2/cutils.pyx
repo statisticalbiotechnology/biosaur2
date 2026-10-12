@@ -749,7 +749,8 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
     cdef list total_num_hills, total_mass_diff, spec_mean_mass_accuracy, basic_id_sorted, all_idx, all_idx_im, all_prevs
     cdef set banned_prev_idx_set, all_idx_im_set
     cdef float hill_mass_accuracy, best_intensity, mz_cur, cur_intensity, cur_mass_diff_with_sign, cur_mass_diff, best_mass_diff, best_mass_diff_with_sign
-    cdef int last_idx, prev_idx, spec_idx, len_mz, idx, fm, fi, best_idx_prev, idx_prev
+    cdef int last_idx, prev_idx, spec_idx, len_mz, idx, fm, fi, best_idx_prev, idx_prev, n_win, k_win
+    cdef list win_keys
     cdef np.ndarray idx_for_sort, mz_sorted, im_sorted
     cdef bint flag1, flag2, flag3, flag1_im, flag2_im, flag3_im
 
@@ -804,24 +805,28 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
 
         for idx, fm, fi in zip(basic_id_sorted, fast_array, (fast_array if paseftol == 0 else fast_array_im)):
 
-            flag1 = fm in prev_fast_dict
-            flag2 = fm-1 in prev_fast_dict
-            flag3 = fm+1 in prev_fast_dict
+            mz_cur = z['m/z array'][idx]
+            if md_correction_int == 1:
+                mass_diff_error_koeff = math.sqrt(600 / mz_cur)
+            elif md_correction_int == 2:
+                mass_diff_error_koeff = 1
+            elif md_correction_int == 3:
+                mass_diff_error_koeff = 600 / mz_cur
+            # m/z bins to search on each side: the md-corrected tolerance can be wider
+            # than one bin (Orbi: above m/z ~1105 for maxmz 1500)
+            n_win = int(hill_mass_accuracy * 1e-6 * mz_cur / mass_diff_error_koeff / mz_step) + 1
 
-            if flag1 or flag2 or flag3:
+            win_keys = [fm, fm-1, fm+1]
+            for k_win in range(2, n_win + 1):
+                win_keys.append(fm - k_win)
+                win_keys.append(fm + k_win)
+            win_keys = [k_win for k_win in win_keys if k_win in prev_fast_dict]
 
-                if flag1:
-                    all_idx = prev_fast_dict[fm]
-                    if flag2:
-                        all_idx += prev_fast_dict[fm-1]
-                    if flag3:
-                        all_idx += prev_fast_dict[fm+1]
-                elif flag2:
-                    all_idx = prev_fast_dict[fm-1]
-                    if flag3:
-                        all_idx += prev_fast_dict[fm+1]
-                elif flag3:
-                    all_idx = prev_fast_dict[fm+1]
+            if win_keys:
+
+                all_idx = prev_fast_dict[win_keys[0]]
+                for k_win in win_keys[1:]:
+                    all_idx += prev_fast_dict[k_win]
 
                 if paseftol > 0:
                     flag1_im = fi in prev_fast_dict_im
@@ -830,21 +835,12 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
 
                 best_intensity = 0
                 best_idx_prev = 0
-                mz_cur = z['m/z array'][idx]
 
 
                 #all_prevs = [[idx_prev, data_for_analyse_tmp[spec_idx-1]['intensity array'][idx_prev]] for idx_prev in all_idx if (idx_prev not in banned_prev_idx_set and (paseftol == 0 or idx_prev in all_idx_im_set))]
                 all_prevs = [[idx_prev, data_for_analyse_tmp[spec_idx-1]['intensity array'][idx_prev]] for idx_prev in all_idx if (idx_prev not in banned_prev_idx_set and (paseftol == 0 or (flag2_im and idx_prev in prev_fast_dict_im[fi-1]) or (flag1_im and idx_prev in prev_fast_dict_im[fi]) or (flag3_im and idx_prev in prev_fast_dict_im[fi+1])))]
                 for idx_prev, cur_intensity in all_prevs:
                     cur_mass_diff_with_sign = (mz_cur - data_for_analyse_tmp[spec_idx-1]['m/z array'][idx_prev]) / mz_cur * 1e6
-
-
-                    if md_correction_int == 1:
-                        mass_diff_error_koeff = math.sqrt(600 / mz_cur)
-                    elif md_correction_int == 2:
-                        mass_diff_error_koeff = 1
-                    elif md_correction_int == 3:
-                        mass_diff_error_koeff = 600 / mz_cur
 
                     cur_mass_diff_with_sign = cur_mass_diff_with_sign * mass_diff_error_koeff
 

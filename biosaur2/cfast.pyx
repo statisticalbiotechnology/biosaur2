@@ -209,6 +209,21 @@ def centroid_pasef_scan_fast(dict scandict, float mz_step, float hill_mz_accurac
 # Hill linking: exact replacement of cutils.detect_hills
 # ---------------------------------------------------------------------------
 
+@cython.cdivision(True)
+cdef inline long long _n_win(float htol, double mzc64, float mz_step, int md_correction_int) noexcept nogil:
+    # cutils.detect_hills: int(hill_mass_accuracy * 1e-6 * mz_cur / mass_diff_error_koeff / mz_step) + 1
+    cdef double koef
+    if not (mzc64 > 0):
+        return 1   # no peaks (or m/z <= 0): window irrelevant
+    if md_correction_int == 1:
+        koef = sqrt(600.0 / mzc64)
+    elif md_correction_int == 2:
+        koef = 1.0
+    else:
+        koef = 600.0 / mzc64
+    return <long long>(<double>htol * 1e-6 * mzc64 / koef / <double>mz_step) + 1
+
+
 cdef inline bint _float_array(object a):
     return isinstance(a, np.ndarray) and a.ndim == 1 and (a.dtype == np.float64 or a.dtype == np.float32)
 
@@ -243,6 +258,7 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
     cdef bint use_im = paseftol > 0
     cdef Py_ssize_t nfr = len(data_for_analyse_tmp), f
     cdef long long kmin = 0, kmax = 0
+    cdef double mzmax_all = 0
     cdef bint have_k = False
     lens = np.empty(nfr, dtype=np.int64)
     # pass 1: validate and get the global m/z bin range
@@ -271,8 +287,13 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
                     kmin = fm_a.min(); kmax = fm_a.max(); have_k = True
                 else:
                     kmin = min(kmin, <long long>fm_a.min()); kmax = max(kmax, <long long>fm_a.max())
+                mzmax_all = max(mzmax_all, <double><float>mz_a.max())
     if kmax - kmin > 100000000:
         return None   # dense bin table would be too large; the dict-based original copes
+    # widest m/z-bin search window (the md-corrected tolerance grows with m/z)
+    cdef long long nwin_max = _n_win(hill_mass_accuracy, mzmax_all, mz_step, md_correction_int) + 1
+    if nwin_max > 1000:
+        return None
 
     cdef Py_ssize_t N = lens.sum()
     off = np.zeros(nfr + 1, dtype=np.int64)
@@ -284,8 +305,8 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
     cdef float[::1] v_tmd = tmd
     cdef Py_ssize_t ntmd = 0
 
-    cdef long long bmin = kmin - 3
-    head = np.full(kmax - kmin + 7, -1, dtype=np.int64)
+    cdef long long bmin = kmin - nwin_max - 2
+    head = np.full(kmax - kmin + 2 * nwin_max + 5, -1, dtype=np.int64)
     cdef np.int64_t[::1] v_head = head
     bstart_a = np.empty(maxn + 1, dtype=np.int64)
     blen_a = np.empty(maxn + 1, dtype=np.int64)
@@ -315,6 +336,9 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
     cdef long long s0, sp = 0, stamp = 0
     cdef long long idx, fmv, fiv, b, b1, b2, b3, a, x, y, ext, ip, dfi, best_prev
     cdef int k
+    cdef long long nwin, kw, ne
+    ebuf_a = np.empty(2 * nwin_max + 2, dtype=np.int64)
+    cdef np.int64_t[::1] ebuf = ebuf_a
     cdef bint have_prev = False, found
     cdef float mzc, d, cmd, ci, best_int, best_md
     cdef float htol = hill_mass_accuracy
@@ -349,21 +373,34 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
                     idx = c_order[j]
                     fmv = c_fm[idx]
                     fiv = c_fi[idx]
-                    b1 = v_head[fmv - bmin]
-                    b2 = v_head[fmv - 1 - bmin]
-                    b3 = v_head[fmv + 1 - bmin]
-                    if b1 < 0 and b2 < 0 and b3 < 0:
-                        continue
-                    if b1 >= 0:
-                        a = b1; x = b2; y = b3
-                    elif b2 >= 0:
-                        a = b2; x = b3; y = -1
+                    mzc = <float>c_mz[idx]
+                    mzc64 = <double>mzc
+                    if md_correction_int == 1:
+                        koef = sqrt(600.0 / mzc64)
+                    elif md_correction_int == 2:
+                        koef = 1.0
                     else:
-                        a = b3; x = -1; y = -1
-                    for k in range(2):
-                        ext = x if k == 0 else y
-                        if ext < 0:
-                            continue
+                        koef = 600.0 / mzc64
+                    nwin = _n_win(htol, mzc64, mz_step, md_correction_int)
+                    if nwin > nwin_max:
+                        return None
+                    # existing previous-frame buckets in the original's order fm, fm-1, fm+1, fm-2, fm+2, ...
+                    ne = 0
+                    b = v_head[fmv - bmin]
+                    if b >= 0:
+                        ebuf[ne] = b; ne += 1
+                    for kw in range(1, nwin + 1):
+                        b = v_head[fmv - kw - bmin]
+                        if b >= 0:
+                            ebuf[ne] = b; ne += 1
+                        b = v_head[fmv + kw - bmin]
+                        if b >= 0:
+                            ebuf[ne] = b; ne += 1
+                    if ne == 0:
+                        continue
+                    a = ebuf[0]
+                    for kw in range(1, ne):
+                        ext = ebuf[kw]
                         # A' = (A minus X) ++ X  (de-duplicated in-place list extension)
                         la = blen[a]; lx = blen[ext]
                         stamp += 1
@@ -397,14 +434,6 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
                     cst = bstart[a]
                     cln = blen[a]
 
-                    mzc = <float>c_mz[idx]
-                    mzc64 = <double>mzc
-                    if md_correction_int == 1:
-                        koef = sqrt(600.0 / mzc64)
-                    elif md_correction_int == 2:
-                        koef = 1.0
-                    else:
-                        koef = 600.0 / mzc64
                     best_int = 0
                     best_prev = 0
                     best_md = 0
