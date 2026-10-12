@@ -284,13 +284,9 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
 
     Semantics reproduced (see cutils.detect_hills):
     * peaks of a frame are visited in np.argsort(intensity)[::-1] order and the
-      previous frame's m/z buckets list peaks in that order;
-    * 'all_idx = prev_fast_dict[fm]; all_idx += ...' extends the previous frame's
-      bucket lists IN PLACE.  Only the order of the last occurrence of each peak in
-      a candidate list matters for the selection below, so buckets are kept
-      de-duplicated in last-occurrence order (A += X -> (A minus X) ++ X);
-    * the ion mobility test (list membership in the +-1 IM buckets) is
-      equivalent to |IM bin(prev) - IM bin(cur)| <= 1;
+      previous frame's m/z buckets list peaks in that order; candidates are the
+      buckets fm, fm-1, fm+1, fm-2, fm+2, ... (window from the md-corrected tolerance);
+    * ion mobility test |IM(cur) - IM(prev)| <= paseftol in double precision;
     * float32 arithmetic of the cdef float variables, the last candidate with the
       maximal float32 intensity wins, and the previous peak with index 0 is never
       banned (best_idx_prev != 0 test).
@@ -316,9 +312,6 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
             if use_im:
                 im_a = z.get('mean inverse reduced ion mobility array')
                 if not _float_array(im_a) or im_a.shape[0] != mz_a.shape[0]:
-                    return None
-                fi_a = (im_a / paseftol).astype(int)
-                if not _fits_c_int(fi_a):
                     return None
             lens[f] = mz_a.shape[0]
             if mz_a.shape[0]:
@@ -353,38 +346,33 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
     bstart_a = np.empty(maxn + 1, dtype=np.int64)
     blen_a = np.empty(maxn + 1, dtype=np.int64)
     bkey_a = np.empty(maxn + 1, dtype=np.int64)
-    mark_a = np.zeros(maxn + 1, dtype=np.int64)
     banned_a = np.zeros(maxn + 1, dtype=np.uint8)
     cdef np.int64_t[::1] bstart = bstart_a
     cdef np.int64_t[::1] blen = blen_a
     cdef np.int64_t[::1] bkey = bkey_a
-    cdef np.int64_t[::1] mark = mark_a
     cdef np.uint8_t[::1] banned = banned_a
-    cdef Py_ssize_t cap = 4 * maxn + 16
-    pool_a = np.empty(cap, dtype=np.int64)
+    pool_a = np.empty(maxn + 1, dtype=np.int64)
     cdef np.int64_t[::1] pool = pool_a
+    ebuf_a = np.empty(2 * nwin_max + 2, dtype=np.int64)
+    cdef np.int64_t[::1] ebuf = ebuf_a
 
     cdef const double[::1] c_mz
     cdef const float[::1] c_it
+    cdef const double[::1] c_im
     cdef const np.int64_t[::1] c_fm
-    cdef const np.int64_t[::1] c_fi
     cdef const np.int64_t[::1] c_order
     cdef const double[::1] p_mz
     cdef const float[::1] p_it
-    cdef const np.int64_t[::1] p_fi
+    cdef const double[::1] p_im
 
-    cdef Py_ssize_t n, j, q, la, lx, st, stx, w, w0, cst, cln, ncap, acc, i
-    cdef Py_ssize_t nb_prev = 0, pool_used = 0, np_prev = 0
-    cdef long long s0, sp = 0, stamp = 0
-    cdef long long idx, fmv, fiv, b, b1, b2, b3, a, x, y, ext, ip, dfi, best_prev
-    cdef int k
-    cdef long long nwin, kw, ne
-    ebuf_a = np.empty(2 * nwin_max + 2, dtype=np.int64)
-    cdef np.int64_t[::1] ebuf = ebuf_a
+    cdef Py_ssize_t n, j, q, e, cst, cln, acc, i
+    cdef Py_ssize_t nb_prev = 0, np_prev = 0
+    cdef long long s0, sp = 0
+    cdef long long idx, fmv, b, ip, best_prev, nwin, kw, ne
     cdef bint have_prev = False, found
     cdef float mzc, d, cmd, ci, best_int, best_md
     cdef float htol = hill_mass_accuracy
-    cdef double mzc64, koef
+    cdef double mzc64, koef, imc, imtol = paseftol
 
     with np.errstate(all='ignore'):
         for f in range(nfr):
@@ -397,15 +385,15 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
             order_a = np.ascontiguousarray(np.argsort(it_a)[::-1], dtype=np.int64)
             fm_a = np.ascontiguousarray((mz_a / mz_step).astype(int), dtype=np.int64)
             if use_im:
-                fi_a = np.ascontiguousarray((z['mean inverse reduced ion mobility array'] / paseftol).astype(int), dtype=np.int64)
+                im64 = np.ascontiguousarray(z['mean inverse reduced ion mobility array'], dtype=np.float64)
             else:
-                fi_a = fm_a
+                im64 = np.zeros(1)
             mz64 = np.ascontiguousarray(mz_a, dtype=np.float64)
             it32 = np.ascontiguousarray(it_a, dtype=np.float32)
             c_mz = mz64
             c_it = it32
+            c_im = im64
             c_fm = fm_a
-            c_fi = fi_a
             c_order = order_a
 
             if have_prev and nb_prev > 0:
@@ -414,7 +402,6 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
                 for j in range(n):
                     idx = c_order[j]
                     fmv = c_fm[idx]
-                    fiv = c_fi[idx]
                     mzc = <float>c_mz[idx]
                     mzc64 = <double>mzc
                     if md_correction_int == 1:
@@ -440,63 +427,30 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
                             ebuf[ne] = b; ne += 1
                     if ne == 0:
                         continue
-                    a = ebuf[0]
-                    for kw in range(1, ne):
-                        ext = ebuf[kw]
-                        # A' = (A minus X) ++ X  (de-duplicated in-place list extension)
-                        la = blen[a]; lx = blen[ext]
-                        stamp += 1
-                        stx = bstart[ext]
-                        for q in range(lx):
-                            mark[pool[stx + q]] = stamp
-                        if pool_used + la + lx > cap:
-                            ncap = max(2 * cap, pool_used + la + lx + 16)
-                            pool2 = np.empty(ncap, dtype=np.int64)
-                            pool2[:pool_used] = pool_a[:pool_used]
-                            pool_a = pool2
-                            pool = pool_a
-                            cap = ncap
-                        st = bstart[a]
-                        if st + la == pool_used:
-                            w = st            # bucket is at the end of the pool: compact in place
-                        else:
-                            w = pool_used
-                        w0 = w
-                        for q in range(la):
-                            ip = pool[st + q]
-                            if mark[ip] != stamp:
-                                pool[w] = ip
-                                w += 1
-                        for q in range(lx):
-                            pool[w] = pool[stx + q]
-                            w += 1
-                        bstart[a] = w0
-                        blen[a] = w - w0
-                        pool_used = w
-                    cst = bstart[a]
-                    cln = blen[a]
-
+                    if use_im:
+                        imc = c_im[idx]
                     best_int = 0
                     best_prev = 0
                     best_md = 0
                     found = False
-                    for q in range(cln):
-                        ip = pool[cst + q]
-                        if banned[ip]:
-                            continue
-                        if use_im:
-                            dfi = p_fi[ip] - fiv
-                            if dfi > 1 or dfi < -1:
+                    for e in range(ne):
+                        cst = bstart[ebuf[e]]
+                        cln = blen[ebuf[e]]
+                        for q in range(cln):
+                            ip = pool[cst + q]
+                            if banned[ip]:
                                 continue
-                        d = <float>((mzc64 - p_mz[ip]) / mzc64 * 1e6)
-                        d = <float>(<double>d * koef)
-                        cmd = fabs(d)
-                        ci = p_it[ip]
-                        if cmd <= htol and ci >= best_int:
-                            best_int = ci
-                            best_prev = ip
-                            best_md = d
-                            found = True
+                            if use_im and not (fabs(imc - p_im[ip]) <= imtol):
+                                continue
+                            d = <float>((mzc64 - p_mz[ip]) / mzc64 * 1e6)
+                            d = <float>(<double>d * koef)
+                            cmd = fabs(d)
+                            ci = p_it[ip]
+                            if cmd <= htol and ci >= best_int:
+                                best_int = ci
+                                best_prev = ip
+                                best_md = d
+                                found = True
                     if found:
                         v_hills[s0 + idx] = v_hills[sp + best_prev]
                         if best_prev != 0:
@@ -525,19 +479,14 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
                 bstart[b] = acc
                 acc += blen[b]
                 blen[b] = 0
-            if acc > cap:
-                cap = 2 * acc
-                pool_a = np.empty(cap, dtype=np.int64)
-                pool = pool_a
             for j in range(n):
                 idx = c_order[j]
                 b = v_head[c_fm[idx] - bmin]
                 pool[bstart[b] + blen[b]] = idx
                 blen[b] += 1
-            pool_used = acc
             p_mz = c_mz
             p_it = c_it
-            p_fi = c_fi
+            p_im = c_im
             sp = s0
             np_prev = n
             have_prev = True
@@ -974,7 +923,7 @@ def build_isotope_index(csr, int T=32):
     ioff = np.ascontiguousarray(seg_off, dtype=np.int64)
     sq, apex = _hill_stats(ioff, ival)
     return dict(mz=np.ascontiguousarray(csr['mz_med'], dtype=np.float32),
-                imkey=np.ascontiguousarray(csr['im_bin'], dtype=np.int32),
+                im=np.ascontiguousarray(csr['im_med'], dtype=np.float32),
                 first=first, last=last, kmin=kmin, nb=nb, T=T,
                 sidx=sidx, sfirst=np.ascontiguousarray(first[sidx]), soff=soff, lidx=lidx, loff=loff,
                 ioff=ioff, ival=ival, sq=sq, apex=apex)
@@ -1011,7 +960,7 @@ def get_initial_isotopes_fast(dict hills_dict, float isotopes_mass_accuracy, lis
     cdef dict charge_ban_map
 
     cdef const float[::1] X_mz = index['mz']
-    cdef const int[::1] X_imkey = index['imkey']
+    cdef const float[::1] X_im = index['im']
     cdef const int[::1] X_first = index['first']
     cdef const int[::1] X_last = index['last']
     cdef const int[::1] X_sidx = index['sidx']
@@ -1069,7 +1018,7 @@ def get_initial_isotopes_fast(dict hills_dict, float isotopes_mass_accuracy, lis
                 m_to_check_fast = int(m_to_check/mz_step)
 
                 # candidates: hills in m/z bins key-1..key+1 that overlap in scans,
-                # pass the IM bin test and the m/z tolerance
+                # are within paseftol in ion mobility and pass the m/z tolerance
                 ncand = 0
                 for bb in range(m_to_check_fast - 1, m_to_check_fast + 2):
                     b = bb - kmin
@@ -1089,7 +1038,7 @@ def get_initial_isotopes_fast(dict hills_dict, float isotopes_mass_accuracy, lis
                         j -= 1
                         if X_last[idx_2] < hill_scans_1_list_first:
                             continue
-                        if use_im and (X_imkey[idx_2] < im_to_check_fast - 1 or X_imkey[idx_2] > im_to_check_fast + 1):
+                        if use_im and not (fabs(<double>X_im[idx_2] - <double>im_mz_1) <= paseftol):
                             continue
                         hill_mz_2 = X_mz[idx_2]
                         mass_diff_abs = hill_mz_2 - m_to_check
@@ -1100,7 +1049,7 @@ def get_initial_isotopes_fast(dict hills_dict, float isotopes_mass_accuracy, lis
                         idx_2 = X_lidx[j]
                         if X_last[idx_2] < hill_scans_1_list_first or X_first[idx_2] > hill_scans_1_list_last:
                             continue
-                        if use_im and (X_imkey[idx_2] < im_to_check_fast - 1 or X_imkey[idx_2] > im_to_check_fast + 1):
+                        if use_im and not (fabs(<double>X_im[idx_2] - <double>im_mz_1) <= paseftol):
                             continue
                         hill_mz_2 = X_mz[idx_2]
                         mass_diff_abs = hill_mz_2 - m_to_check

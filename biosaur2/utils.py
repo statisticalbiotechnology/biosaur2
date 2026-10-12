@@ -69,8 +69,6 @@ def get_hills_dict_from_hills_features(hills_features, hill_mass_accuracy, pasef
     hills_dict['hills_intensity_array'] = hills_features['hills_intensity_list'].apply(ast.literal_eval).values
 
     hills_dict['hills_mz_median_fast_dict'] = defaultdict(list)
-    if paseftol > 0:
-        hills_dict['hills_im_median_fast_dict'] = defaultdict(set)
 
     for idx_1, mz_val in enumerate(hills_features['mz'].values):
         mz_median_int = int(mz_val / mz_step)
@@ -79,12 +77,6 @@ def get_hills_dict_from_hills_features(hills_features, hill_mass_accuracy, pasef
         hills_dict['hills_mz_median_fast_dict'][mz_median_int-1].append(tmp_val)
         hills_dict['hills_mz_median_fast_dict'][mz_median_int].append(tmp_val)
         hills_dict['hills_mz_median_fast_dict'][mz_median_int+1].append(tmp_val)
-
-        if paseftol > 0:
-            im_median_int = int(hills_features['im'].values[idx_1] / paseftol)
-            hills_dict['hills_im_median_fast_dict'][im_median_int-1].add(idx_1)
-            hills_dict['hills_im_median_fast_dict'][im_median_int].add(idx_1)
-            hills_dict['hills_im_median_fast_dict'][im_median_int+1].add(idx_1)
 
     hills_dict['hills_idict'] = [None] * len(hills_dict['hills_idx_array_unique'])
     hills_dict['hill_sqrt_of_i'] = [None] * len(hills_dict['hills_idx_array_unique'])
