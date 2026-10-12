@@ -223,7 +223,9 @@ def get_initial_isotopes(dict hills_dict, float isotopes_mass_accuracy, list iso
 
                     if cos_corr:
 
-                        iter_candidates = iter_candidates[:number_of_passed_isotopes]
+                        # number_of_passed_isotopes counts the monoisotopic peak too: keep
+                        # only the isotopes that the averagine cosine validated
+                        iter_candidates = iter_candidates[:number_of_passed_isotopes - 1]
 
                         local_res_dict = {
                             'monoisotope hill idx': hill_idx_1,
@@ -236,7 +238,7 @@ def get_initial_isotopes(dict hills_dict, float isotopes_mass_accuracy, list iso
                             'charge': charge,
                             'FAIMS': faims_val,
                             'im': 0 if paseftol == 0 else im_mz_1,
-                            'intensity_array_for_cos_corr': [all_theoretical_int[:number_of_passed_isotopes+1], all_exp_intensity[:number_of_passed_isotopes+1]],
+                            'intensity_array_for_cos_corr': [all_theoretical_int[:number_of_passed_isotopes], all_exp_intensity[:number_of_passed_isotopes]],
                         }
 
                         ready.append(local_res_dict)
