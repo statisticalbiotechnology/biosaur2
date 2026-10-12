@@ -266,12 +266,6 @@ def hills_dict_from_csr(csr, full, write_hills=True):
             fd[b].append(tv)
             fd[b + 1].append(tv)
         hd['hills_mz_median_fast_dict'] = fd
-        if csr['use_im']:
-            imd = defaultdict(set)
-            im_bin = csr['im_bin']
-            for u in np.unique(np.concatenate([im_bin - 1, im_bin, im_bin + 1])).tolist():
-                imd[u] = set(np.flatnonzero(np.abs(im_bin - u) <= 1).tolist())
-            hd['hills_im_median_fast_dict'] = imd
     hd['hills_idict'] = [None] * N
     hd['hill_sqrt_of_i'] = [None] * N
     hd['hills_intensity_apex'] = [None] * N
