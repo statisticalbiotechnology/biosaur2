@@ -632,21 +632,22 @@ def split_hills_kernel(const double[::1] I, const np.int64_t[::1] hill_off, int 
 @cython.cdivision(True)
 def hill_aggregates(const double[::1] mz, const double[::1] I, const double[::1] im, const np.int64_t[::1] off, float mz_step, float paseftol, bint use_im):
     """Per-hill values of cutils.process_hills:
-    hills_mz_median: float32 accumulation of mz*I and I in scan order (cdef float loop);
+    hills_mz_median: float64 accumulation of mz*I and I in scan order (cdef double loop);
     hills_im_median: float32(np.average(im, weights=I)) = (0 + pairwise(im*I)) / (0 + pairwise(I));
     bin keys (int)(float32 value / float32 step).
-    Returns (mz_med f32, im_med f32, mz_bin int64, im_bin int64), or None if a value
+    Returns (mz_med f64, im_med f32, mz_bin int64, im_bin int64), or None if a value
     would be non-finite or a bin would not fit a C int (the original raises there)."""
     cdef Py_ssize_t nh = off.shape[0] - 1, h, p, a, b, n = I.shape[0]
-    cdef float accm, acci, m32, i32, mm, im32, q
+    cdef float im32, q
+    cdef double accm, acci, mm, qd
     cdef double avg, scl
     cdef bint bad = False
-    mz_med_a = np.empty(nh, dtype=np.float32)
+    mz_med_a = np.empty(nh, dtype=np.float64)
     im_med_a = np.zeros(nh, dtype=np.float32)
     mz_bin_a = np.empty(nh, dtype=np.int64)
     im_bin_a = np.zeros(nh, dtype=np.int64)
     prod_a = np.empty(n if use_im else 1, dtype=np.float64)
-    cdef float[::1] mz_med = mz_med_a
+    cdef double[::1] mz_med = mz_med_a
     cdef float[::1] im_med = im_med_a
     cdef np.int64_t[::1] mz_bin = mz_bin_a
     cdef np.int64_t[::1] im_bin = im_bin_a
@@ -661,20 +662,18 @@ def hill_aggregates(const double[::1] mz, const double[::1] I, const double[::1]
             accm = 0
             acci = 0
             for p in range(a, b):
-                m32 = <float>mz[p]
-                i32 = <float>I[p]
-                accm = accm + m32 * i32
-                acci = acci + i32
+                accm = accm + mz[p] * I[p]
+                acci = acci + I[p]
             if acci == 0:
                 bad = True
                 break
             mm = accm / acci
             mz_med[h] = mm
-            q = mm / mz_step
-            if not (q > -2147483648.0 and q < 2147483648.0):
+            qd = mm / mz_step
+            if not (qd > -2147483648.0 and qd < 2147483648.0):
                 bad = True
                 break
-            mz_bin[h] = <int>q
+            mz_bin[h] = <int>qd
             if use_im:
                 scl = 0.0 + pairwise_sum(&I[a], b - a)
                 if scl == 0.0:
@@ -902,7 +901,7 @@ def build_isotope_index(csr, int T=32):
     ival = np.ascontiguousarray(csr['I64'])
     ioff = np.ascontiguousarray(seg_off, dtype=np.int64)
     sq, apex = _hill_stats(ioff, ival)
-    return dict(mz=np.ascontiguousarray(csr['mz_med'], dtype=np.float32),
+    return dict(mz=np.ascontiguousarray(csr['mz_med'], dtype=np.float64),
                 imkey=np.ascontiguousarray(csr['im_bin'], dtype=np.int32),
                 first=first, last=last, kmin=kmin, nb=nb, T=T,
                 sidx=sidx, sfirst=np.ascontiguousarray(first[sidx]), soff=soff, lidx=lidx, loff=loff,
@@ -933,13 +932,14 @@ def get_initial_isotopes_fast(dict hills_dict, float isotopes_mass_accuracy, lis
     cdef list ready, charges, candidates, tmp_candidates
     cdef int idx_1, hill_idx_1, idx_2, hill_idx_2, im_to_check_fast, hill_scans_1_list_first, hill_scans_1_list_last, ch_cur, ch_iter
     cdef int charge, isotope_number, m_to_check_fast, max_pos, i_local_isotope
-    cdef float im_mz_1, hill_mz_1, hill_mz_2, m_to_check, mass_diff_abs, cos_cor_RT
+    cdef float im_mz_1, cos_cor_RT
+    cdef double hill_mz_1, hill_mz_2, m_to_check, mass_diff_abs
     cdef float local_minimum, hill_intensity_apex_1, hill_intensity_apex_2
     cdef double mass_diff_ppm
     cdef dict banned_charges, local_isotopes_dict
     cdef dict charge_ban_map
 
-    cdef const float[::1] X_mz = index['mz']
+    cdef const double[::1] X_mz = index['mz']
     cdef const int[::1] X_imkey = index['imkey']
     cdef const int[::1] X_first = index['first']
     cdef const int[::1] X_last = index['last']

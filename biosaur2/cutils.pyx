@@ -73,7 +73,8 @@ def get_initial_isotopes(dict hills_dict, float isotopes_mass_accuracy, list iso
     cdef list ready, charges, hill_scans_1_list, hill_scans_2_list, candidates, tmp_candidates
     cdef int idx_1, hill_idx_1, idx_2, hill_idx_2, im_to_check_fast, hill_scans_1_list_first, hill_scans_1_list_last, ch_cur, ch_iter
     cdef int hill_scans_2_list_first, hill_scans_2_list_last, charge, isotope_number, m_to_check_fast, max_pos, i_local_isotope
-    cdef float im_mz_1, hill_mz_1, im_mz_2, hill_mz_2, m_to_check, mass_diff_abs, cos_cor_RT
+    cdef float im_mz_1, im_mz_2, cos_cor_RT
+    cdef double hill_mz_1, hill_mz_2, m_to_check, mass_diff_abs
     cdef float hill_sqrt_of_i_1, hill_sqrt_of_i_2, local_minimum, hill_intensity_apex_1, hill_intensity_apex_2
     cdef double mass_diff_ppm
     cdef dict banned_charges, hill_idict_1, hill_idict_2, local_isotopes_dict
@@ -876,7 +877,8 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
 def process_hills(dict hills_dict, list data_for_analyse_tmp, float mz_step, float paseftol, dict args, bint dia=False):
 
     cdef dict 
-    cdef float mz_median, i_sum_tmp, mz_val_tmp, i_val_tmp, im_median
+    cdef float im_median
+    cdef double mz_median, i_sum_tmp, mz_val_tmp, i_val_tmp
     cdef list tmp_intensity, tmp_mz_array, tmp_im_array, tmp_scans_list, tmp_scans, tmp_orig_idx
     cdef set tmp_scans_set
     cdef tuple tmp_val
