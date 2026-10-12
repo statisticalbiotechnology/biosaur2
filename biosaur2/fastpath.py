@@ -96,8 +96,7 @@ def split_process_fast(hills_dict, data, mz_step, paseftol, args):
 
     Returns a dict of CSR arrays describing the final hills (hill k = new id k+1,
     peaks in scan order), or None when the original functions must run instead:
-    duplicate (hill, scan) pairs (the original's unstable float-key argsorts decide
-    their order), no hill reaching minlh (the original crashes), unexpected dtypes,
+    duplicate (hill, scan) pairs, no hill reaching minlh (the original crashes), unexpected dtypes,
     negative or non-finite intensities, or values the original would reject.
     """
     if not FAST_OK:
@@ -130,8 +129,8 @@ def split_process_fast(hills_dict, data, mz_step, paseftol, args):
     pos = np.flatnonzero(keep)
     if len(pos) == 0:
         return None
-    # the original orders peaks with np.argsort(h + (s+1)/(max(s)+2)); for unique
-    # (hill, scan) pairs that is a stable grouping of the frame-major input by hill
+    # the original orders peaks with np.lexsort((s, h)); for the frame-major input
+    # that is a stable grouping by hill
     perm = pos[np.argsort(h[pos], kind='stable')]
     hs = h[perm]
     ss = s[perm]

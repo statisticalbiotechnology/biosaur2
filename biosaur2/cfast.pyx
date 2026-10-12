@@ -212,8 +212,8 @@ def centroid_pasef_scan_fast(dict scandict, float mz_step, float hill_mz_accurac
         mzf = (mz_ar / mz_step).astype(int)
     if not (_fits_c_int(imf) and _fits_c_int(mzf)):
         return None
-    # same np.argsort call (same dtype, default kind) as the original -> same tie order
-    idx = np.argsort(mzf)
+    # same order as the original: m/z bins ascending, descending m/z within a bin
+    idx = np.lexsort((-mz_ar, mzf))
     mzf = np.ascontiguousarray(mzf[idx], dtype=np.int64)
     imf = np.ascontiguousarray(imf[idx], dtype=np.int64)
     mz = np.ascontiguousarray(mz_ar[idx])
@@ -283,7 +283,7 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
     Returns None when the inputs are outside what this function reproduces.
 
     Semantics reproduced (see cutils.detect_hills):
-    * peaks of a frame are visited in np.argsort(intensity)[::-1] order and the
+    * peaks of a frame are visited in np.argsort(-intensity, kind='stable') order and the
       previous frame's m/z buckets list peaks in that order; candidates are the
       buckets fm, fm-1, fm+1, fm-2, fm+2, ... (window from the md-corrected tolerance);
     * ion mobility test |IM(cur) - IM(prev)| <= paseftol in double precision;
@@ -381,8 +381,8 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
             it_a = z['intensity array']
             n = mz_a.shape[0]
             s0 = off[f]
-            # identical call to the original: descending order of np.argsort(intensity)
-            order_a = np.ascontiguousarray(np.argsort(it_a)[::-1], dtype=np.int64)
+            # identical call to the original: descending intensity, ties in peak order
+            order_a = np.ascontiguousarray(np.argsort(-it_a, kind='stable'), dtype=np.int64)
             fm_a = np.ascontiguousarray((mz_a / mz_step).astype(int), dtype=np.int64)
             if use_im:
                 im64 = np.ascontiguousarray(z['mean inverse reduced ion mobility array'], dtype=np.float64)

@@ -337,7 +337,8 @@ def split_peaks_multi(hills_dict, data_for_analyse_tmp, hvf, args):
 
     if len(hills_dict['orig_idx_array']):
 
-        idx_sort = np.argsort(hills_dict['hills_idx_array'] + ((hills_dict['scan_idx_array'] + 1) / (hills_dict['scan_idx_array'].max()+2)))
+        # by hill, then scan; stable for (hill, scan) duplicates
+        idx_sort = np.lexsort((hills_dict['scan_idx_array'], hills_dict['hills_idx_array']))
         hills_dict['hills_idx_array'] = hills_dict['hills_idx_array'][idx_sort]
         hills_dict['scan_idx_array'] = hills_dict['scan_idx_array'][idx_sort]
         hills_dict['orig_idx_array'] = hills_dict['orig_idx_array'][idx_sort]
