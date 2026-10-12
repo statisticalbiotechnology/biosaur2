@@ -68,6 +68,11 @@ def run():
     if os.name == 'nt':
         logger.debug('Turning off multiprocessing for Windows system')
         args['nprocs'] = 1
+    elif args['nprocs'] > 1:
+        # the multi-process isotope search drops the last len % nprocs hills and
+        # returns clusters in a nondeterministic order
+        logger.warning('-nprocs > 1 is not supported for feature detection; using 1 process')
+        args['nprocs'] = 1
 
     for filename in args['files']:
         logger.info('Starting file: %s', filename)
