@@ -72,31 +72,68 @@ cdef Py_ssize_t _centroid_kernel(const np.int64_t[::1] mzf, const np.int64_t[::1
                                  const double[::1] mz, const double[::1] it, const double[::1] im,
                                  double hacc, double imacc, float pasefmini, int pasefminlh,
                                  double[::1] out_mz, double[::1] out_i, double[::1] out_im,
-                                 Py_ssize_t[::1] tmp, double[::1] wbuf, double[::1] pbuf) noexcept nogil:
-    # Same walk as cutils.centroid_pasef_scan.  The 'banned_idx' set of the original
-    # can never match (every banned index is below the current cursor), so it is omitted.
+                                 Py_ssize_t[::1] tmp, double[::1] wbuf, double[::1] pbuf,
+                                 np.uint8_t[::1] banned) noexcept nogil:
+    # Same walk as cutils.centroid_pasef_scan ('banned' = the original's banned_idx set).
     # Returns the number of output peaks, or -1 if a cluster has zero total weight
     # (np.average raises ZeroDivisionError there; the caller falls back to the original).
-    cdef Py_ssize_t N = mz.shape[0], nout = 0, p = 0, j, k, ltmp
+    cdef Py_ssize_t N = mz.shape[0], nout = 0, p = 0, j, k, ltmp, cur, nchain, k2
+    cdef double mzc, imc
     cdef int mvi, ivi
     cdef float macc, iv
     cdef double s, scl, mzv, imv
     while p < N:
+        if banned[p]:
+            p += 1
+            continue
         macc = <float>(mz[p] * 1e-6 * hacc)
         mvi = <int>mzf[p]
         ivi = <int>imf[p]
         tmp[0] = p
         ltmp = 1
+        cur = p
         j = p + 1
         while j < N:
-            if <int>mzf[j] - mvi > 1:
-                break
-            elif fabs(mz[p] - mz[j]) <= <double>macc:
-                if abs(ivi - <int>imf[j]) <= 1:
-                    if fabs(im[p] - im[j]) <= imacc:
-                        tmp[ltmp] = j
-                        ltmp += 1
-                        p = j
+            if not banned[j]:
+                if <int>mzf[j] - mvi > 1:
+                    break
+                elif fabs(mz[cur] - mz[j]) <= <double>macc:
+                    if abs(ivi - <int>imf[j]) <= 1:
+                        if fabs(im[cur] - im[j]) <= imacc:
+                            tmp[ltmp] = j
+                            ltmp += 1
+                            cur = j
+            j += 1
+        # absorb the window's remaining peaks within tolerance of the chain centroid
+        # (cutils.centroid_pasef_scan; np.average as below)
+        mzc = mz[p]
+        imc = im[p]
+        if ltmp > 1:
+            s = 0.0
+            for k in range(ltmp):
+                wbuf[k] = it[tmp[k]]
+                s = s + wbuf[k]
+            if s > 0:
+                scl = 0.0 + pairwise_sum(&wbuf[0], ltmp)
+                for k in range(ltmp):
+                    pbuf[k] = mz[tmp[k]] * wbuf[k]
+                mzc = (0.0 + pairwise_sum(&pbuf[0], ltmp)) / scl
+                for k in range(ltmp):
+                    pbuf[k] = im[tmp[k]] * wbuf[k]
+                imc = (0.0 + pairwise_sum(&pbuf[0], ltmp)) / scl
+        nchain = ltmp
+        j = p + 1
+        k2 = 1
+        while j < N:
+            # members of the chain are ascending; skip them
+            if k2 < nchain and tmp[k2] == j:
+                k2 += 1
+            elif not banned[j]:
+                if <int>mzf[j] - mvi > 1:
+                    break
+                if fabs(mz[j] - mzc) <= <double>macc and fabs(im[j] - imc) <= imacc:
+                    tmp[ltmp] = j
+                    ltmp += 1
             j += 1
         if ltmp >= pasefminlh:
             if ltmp == 1:
@@ -128,6 +165,9 @@ cdef Py_ssize_t _centroid_kernel(const np.int64_t[::1] mzf, const np.int64_t[::1
                     out_mz[nout] = <float>mzv
                     out_im[nout] = <float>imv
                     nout += 1
+        # accepted or not, the cluster's peaks have been considered
+        for k in range(ltmp):
+            banned[tmp[k]] = 1
         p += 1
     return nout
 
@@ -183,6 +223,8 @@ def centroid_pasef_scan_fast(dict scandict, float mz_step, float hill_mz_accurac
     out_i = np.empty(N)
     out_im = np.empty(N)
     tmp = np.empty(N, dtype=np.intp)
+    banned_a = np.zeros(N, dtype=np.uint8)
+    cdef np.uint8_t[::1] v_banned = banned_a
     wbuf = np.empty(N)
     pbuf = np.empty(N)
     cdef const np.int64_t[::1] v_mzf = mzf
@@ -199,7 +241,7 @@ def centroid_pasef_scan_fast(dict scandict, float mz_step, float hill_mz_accurac
     cdef double hacc = hill_mz_accuracy, imacc = ion_mobility_accuracy
     with nogil:
         n = _centroid_kernel(v_mzf, v_imf, v_mz, v_it, v_im, hacc, imacc, pasefmini, pasefminlh,
-                             v_omz, v_oi, v_oim, v_tmp, v_wb, v_pb)
+                             v_omz, v_oi, v_oim, v_tmp, v_wb, v_pb, v_banned)
     if n < 0:
         return None
     return out_mz[:n].copy(), out_i[:n].copy(), out_im[:n].copy()
