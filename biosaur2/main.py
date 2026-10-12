@@ -16,6 +16,11 @@ import gc
 def process_features_iteration(hills_dict, faims_val, mz_step, paseftol, RT_dict, data_start_id, write_header, args, isotope_index=None):
     isotopes_mass_accuracy = args['itol']
 
+    if not len(hills_dict.get('hills_idx_array_unique', [])):
+        logger.warning('No hills left for feature detection; no features written')
+        utils.write_output([], args, write_header)
+        return set()
+
     min_charge = args['cmin']
     max_charge = args['cmax']
     ivf = args['ivf']
@@ -209,7 +214,10 @@ def process_features_iteration(hills_dict, faims_val, mz_step, paseftol, RT_dict
 
     ready_final = []
     ready_set = set()
-    if fastpath.FAST_OK:
+    if not ready:
+        logger.warning('No isotope clusters found; no features written')
+        max_l = 0
+    elif fastpath.FAST_OK:
         # same result as the loop below (which always works on ready[0]), in O(n log n)
         ready_final, ready_set = fastpath.select_features(ready)
         max_l = 0
@@ -319,6 +327,13 @@ def split_peaks_multi(hills_dict, data_for_analyse_tmp, hvf, args):
 
     all_sets = []
     all_sorted_idx = []
+
+    if not len(hills_dict['orig_idx_array']):
+        logger.warning('No hill reaches the minimum length (minlh=%d)', min_length_hill)
+        hills_dict['hills_idx_array'] = []
+        hills_dict['scan_idx_array'] = []
+        hills_dict['orig_idx_array'] = []
+        return hills_dict
 
     if len(hills_dict['orig_idx_array']):
 

@@ -997,4 +997,14 @@ def process_hills(dict hills_dict, list data_for_analyse_tmp, float mz_step, flo
         hills_dict['hills_intensity_apex'] = [None] * len(hills_dict['hills_idx_array_unique'])
         hills_dict['hills_scan_apex'] = [None] * len(hills_dict['hills_idx_array_unique'])
 
+    else:
+        # no hills: same keys, empty
+        hills_dict['hills_idx_array_unique'] = []
+        for k in ('hills_mz_median', 'hills_intensity_array', 'hills_scan_sets', 'hills_scan_lists', 'hills_lengths',
+                  'tmp_mz_array', 'hills_idict', 'hill_sqrt_of_i', 'hills_intensity_apex', 'hills_scan_apex'):
+            hills_dict[k] = []
+        hills_dict['hills_mz_median_fast_dict'] = defaultdict(list)
+        if paseftol > 0:
+            hills_dict['hills_im_median'] = []
+
     return hills_dict
