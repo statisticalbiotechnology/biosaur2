@@ -1,4 +1,4 @@
-from . import utils
+from . import utils, monorescue
 import numpy as np
 import pandas as pd
 from scipy.stats import binom
@@ -285,6 +285,10 @@ def process_features_iteration(hills_dict, faims_val, mz_step, paseftol, RT_dict
         cur_l += 1
 
     logger.info('Number of detected isotope clusters: %d', len(ready_final))
+
+    if args.get('mono_rescue'):
+        ready_final, ready_set = monorescue.rescue(
+            hills_dict, ready_final, ready_set, a, isotopes_list, isotopes_mass_accuracy, paseftol)
 
 
     negative_mode = args['nm']
@@ -575,7 +579,8 @@ def process_file(args):
                 logger.info('Starting hills detection')
                 hills_dict = None
                 if use_fast:
-                    res = fastpath.cfast.detect_hills_fast(data_for_analyse_tmp, args['htol'], mz_step, paseftol, md_correction_int)
+                    res = fastpath.cfast.detect_hills_fast(data_for_analyse_tmp, args['htol'], mz_step, paseftol, md_correction_int,
+                                                          max_missing=min(1, max(0, int(args.get('hill_max_missing', 0)))))
                     if res is not None:
                         hills_dict = res[0]
                     else:

@@ -208,7 +208,7 @@ def write_output(peptide_features, args, write_header=True, hills=False):
             'isoerror2',
         ]
         if args['write_extra_details']:
-            columns_for_output += ['isoerror','isotopes','intensity_array_for_cos_corr','monoisotope hill idx','monoisotope idx']
+            columns_for_output += ['isoerror','isotopes','intensity_array_for_cos_corr','monoisotope hill idx','monoisotope idx', 'shift_margin']
 
     if write_header:
 
