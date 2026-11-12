@@ -575,7 +575,8 @@ def process_file(args):
                 logger.info('Starting hills detection')
                 hills_dict = None
                 if use_fast:
-                    res = fastpath.cfast.detect_hills_fast(data_for_analyse_tmp, args['htol'], mz_step, paseftol, md_correction_int)
+                    res = fastpath.cfast.detect_hills_fast(data_for_analyse_tmp, args['htol'], mz_step, paseftol, md_correction_int,
+                                                          max_missing=min(1, max(0, int(args.get('hill_max_missing', 0)))))
                     if res is not None:
                         hills_dict = res[0]
                     else:

@@ -786,13 +786,26 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
     cdef double im_cur
     cdef np.ndarray idx_for_sort, mz_sorted, im_sorted
     cdef bint flag1, flag2, flag3, flag1_im, flag2_im, flag3_im
+    cdef dict prev2_fast_dict
+    cdef set prev_continued, banned_prev2_idx_set
+    cdef int prev2_idx, max_missing, best_idx_prev2, idx_prev2
+    cdef bint linked
+    cdef float best_intensity2
+    cdef list keys_all
 
     hills_dict = {}
 
     if dia is False:
         hill_mass_accuracy = args['htol']
+        # Scans a hill may skip. 0 is the original behaviour: a peak links only
+        # to the immediately preceding spectrum, so one scan in which the peak
+        # drops out ends the hill. On Orbitrap DDA data that happens constantly
+        # at the faint edges of an elution, and the resulting features are far
+        # narrower in RT than the elution itself. Only 0 and 1 are supported.
+        max_missing = min(1, max(0, int(args.get('hill_max_missing', 0))))
     else:
         hill_mass_accuracy = args['diahtol']
+        max_missing = 0
 
     hills_dict['hills_idx_array'] = []
     hills_dict['orig_idx_array'] = []
@@ -805,6 +818,10 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
     last_idx = -1
     prev_idx = -1
     prev_fast_dict = dict()
+    prev2_idx = -1
+    prev2_fast_dict = dict()
+    # peaks of spectrum s-2 that a peak of s-1 already continued
+    prev_continued = set()
 
     total_num_hills = []
     total_mass_diff = []
@@ -834,8 +851,10 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
         fast_dict, fast_array = get_fast_dict(mz_sorted, mz_step, basic_id_sorted)
 
         banned_prev_idx_set = set()
+        banned_prev2_idx_set = set()
 
         for idx, fm in zip(basic_id_sorted, fast_array):
+            linked = False
 
             mz_cur = z['m/z array'][idx]
             if md_correction_int == 1:
@@ -848,11 +867,11 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
             # than one bin (Orbi: above m/z ~1105 for maxmz 1500)
             n_win = int(hill_mass_accuracy * 1e-6 * mz_cur / mass_diff_error_koeff / mz_step) + 1
 
-            win_keys = [fm, fm-1, fm+1]
+            keys_all = [fm, fm-1, fm+1]
             for k_win in range(2, n_win + 1):
-                win_keys.append(fm - k_win)
-                win_keys.append(fm + k_win)
-            win_keys = [k_win for k_win in win_keys if k_win in prev_fast_dict]
+                keys_all.append(fm - k_win)
+                keys_all.append(fm + k_win)
+            win_keys = [k_win for k_win in keys_all if k_win in prev_fast_dict]
 
             if win_keys:
 
@@ -881,6 +900,7 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
 
                     cur_mass_diff = abs(cur_mass_diff_with_sign)
                     if cur_mass_diff <= hill_mass_accuracy and cur_intensity >= best_intensity:
+                        linked = True
                         best_mass_diff = cur_mass_diff
                         best_mass_diff_with_sign = cur_mass_diff_with_sign
                         best_intensity = cur_intensity
@@ -892,7 +912,34 @@ def detect_hills(list data_for_analyse_tmp, dict args, float mz_step, float pase
                     total_mass_diff.append(best_mass_diff_with_sign)
                     mass_diff_hill_idx.append(hills_dict['hills_idx_array'][last_idx+1+idx])
 
+            # Bridge one missing scan: continue a hill that ended in spectrum s-2,
+            # i.e. one whose peak there no peak of s-1 continued. Same m/z and
+            # ion-mobility tests as above; the most intense candidate wins.
+            if max_missing >= 1 and not linked and spec_idx >= 2:
+                best_intensity2 = 0
+                best_idx_prev2 = -1
+                if paseftol > 0:
+                    im_cur = z['mean inverse reduced ion mobility array'][idx]
+                for k_win in keys_all:
+                    if k_win not in prev2_fast_dict:
+                        continue
+                    for idx_prev2 in prev2_fast_dict[k_win]:
+                        if idx_prev2 in prev_continued or idx_prev2 in banned_prev2_idx_set:
+                            continue
+                        if paseftol > 0 and abs(im_cur - <double>data_for_analyse_tmp[spec_idx-2]['mean inverse reduced ion mobility array'][idx_prev2]) > paseftol:
+                            continue
+                        cur_mass_diff = abs((mz_cur - data_for_analyse_tmp[spec_idx-2]['m/z array'][idx_prev2]) / mz_cur * 1e6 * mass_diff_error_koeff)
+                        cur_intensity = data_for_analyse_tmp[spec_idx-2]['intensity array'][idx_prev2]
+                        if cur_mass_diff <= hill_mass_accuracy and cur_intensity >= best_intensity2:
+                            best_intensity2 = cur_intensity
+                            best_idx_prev2 = idx_prev2
+                if best_idx_prev2 >= 0:
+                    banned_prev2_idx_set.add(best_idx_prev2)
+                    hills_dict['hills_idx_array'][last_idx+1+idx] = hills_dict['hills_idx_array'][prev2_idx+1+best_idx_prev2]
 
+        prev_continued = banned_prev_idx_set
+        prev2_fast_dict = prev_fast_dict
+        prev2_idx = prev_idx
         prev_fast_dict = fast_dict
         prev_idx = last_idx
         last_idx = last_idx+len_mz

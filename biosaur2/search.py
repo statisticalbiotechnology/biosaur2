@@ -34,6 +34,7 @@ def run():
     parser.add_argument('-hvf', help='Threshold to split hills into multiple if local minimum intensity multiplied by hvf is less than both surrounding local maximums', default=1.3, type=float)
     parser.add_argument('-ivf', help='Threshold to split isotope pattern into multiple features if local minimum intensity multiplied by ivf is less right local maximum', default=5.0, type=float)
     parser.add_argument('-minlh', help='minimum length for hill', default=2, type=int)
+    parser.add_argument('-hill_max_missing', help='number of scans a hill may skip when its peak drops out (0 or 1). 0 is the original behaviour; 1 bridges single-scan gaps, as Dinosaur does', default=0, type=int)
     parser.add_argument('-pasefminlh', help='minimum length for pasef hill', default=1, type=int)
     parser.add_argument('-cmin', help='min charge', default=1, type=int)
     parser.add_argument('-cmax', help='max charge', default=6, type=int)

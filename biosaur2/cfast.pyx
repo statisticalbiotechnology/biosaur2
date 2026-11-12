@@ -273,7 +273,7 @@ cdef inline bint _float_array(object a):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.cdivision(True)
-def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float mz_step, float paseftol, int md_correction_int=1, bint want_mass_diff=False):
+def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float mz_step, float paseftol, int md_correction_int=1, bint want_mass_diff=False, int max_missing=0):
     """Exact replacement of cutils.detect_hills (dia or not: pass the matching tolerance).
 
     Returns (hills_dict, total_mass_diff) where hills_dict holds int64 numpy arrays
@@ -290,6 +290,11 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
     * float32 arithmetic of the cdef float variables, the last candidate with the
       maximal float32 intensity wins, and the previous peak with index 0 is never
       banned (best_idx_prev != 0 test).
+
+    max_missing=1 (cutils.detect_hills with -hill_max_missing 1): a peak that finds
+    no partner in the previous frame may continue a hill that ended two frames
+    back, i.e. one whose peak there the previous frame did not continue. Same
+    m/z and ion-mobility tests; the most intense candidate wins.
     """
     if not NUMPY_OK or md_correction_int not in (1, 2, 3) or paseftol < 0:
         return None
@@ -356,6 +361,27 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
     ebuf_a = np.empty(2 * nwin_max + 2, dtype=np.int64)
     cdef np.int64_t[::1] ebuf = ebuf_a
 
+    # the frame before the previous one, for bridging one missing scan
+    cdef bint gaps = max_missing >= 1
+    head2 = np.full(kmax - kmin + 2 * nwin_max + 5 if gaps else 1, -1, dtype=np.int64)
+    cdef np.int64_t[::1] v_head2 = head2
+    bstart2_a = np.empty(maxn + 1, dtype=np.int64)
+    blen2_a = np.empty(maxn + 1, dtype=np.int64)
+    bkey2_a = np.empty(maxn + 1, dtype=np.int64)
+    pool2_a = np.empty(maxn + 1, dtype=np.int64)
+    cont2_a = np.zeros(maxn + 1, dtype=np.uint8)     # continued by the previous frame
+    banned2_a = np.zeros(maxn + 1, dtype=np.uint8)   # taken by a gap link in this frame
+    cdef np.int64_t[::1] bstart2 = bstart2_a
+    cdef np.int64_t[::1] blen2 = blen2_a
+    cdef np.int64_t[::1] bkey2 = bkey2_a
+    cdef np.int64_t[::1] pool2 = pool2_a
+    cdef np.uint8_t[::1] cont2 = cont2_a
+    cdef np.uint8_t[::1] banned2 = banned2_a
+    cdef Py_ssize_t nb_prev2 = 0, np_prev2 = 0
+    cdef long long sp2 = 0, best_prev2
+    cdef bint have_prev2 = False, found2
+    cdef float best_int2
+
     cdef const double[::1] c_mz
     cdef const float[::1] c_it
     cdef const double[::1] c_im
@@ -364,6 +390,9 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
     cdef const double[::1] p_mz
     cdef const float[::1] p_it
     cdef const double[::1] p_im
+    cdef const double[::1] p2_mz
+    cdef const float[::1] p2_it
+    cdef const double[::1] p2_im
 
     cdef Py_ssize_t n, j, q, e, cst, cln, acc, i
     cdef Py_ssize_t nb_prev = 0, np_prev = 0
@@ -396,9 +425,12 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
             c_fm = fm_a
             c_order = order_a
 
-            if have_prev and nb_prev > 0:
+            if (have_prev and nb_prev > 0) or (gaps and have_prev2 and nb_prev2 > 0):
                 for i in range(np_prev):
                     banned[i] = 0
+                if gaps:
+                    for i in range(np_prev2):
+                        banned2[i] = 0
                 for j in range(n):
                     idx = c_order[j]
                     fmv = c_fm[idx]
@@ -425,15 +457,13 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
                         b = v_head[fmv + kw - bmin]
                         if b >= 0:
                             ebuf[ne] = b; ne += 1
-                    if ne == 0:
-                        continue
                     if use_im:
                         imc = c_im[idx]
                     best_int = 0
                     best_prev = 0
                     best_md = 0
                     found = False
-                    for e in range(ne):
+                    for e in range(ne if (have_prev and nb_prev > 0) else 0):
                         cst = bstart[ebuf[e]]
                         cln = blen[ebuf[e]]
                         for q in range(cln):
@@ -458,6 +488,63 @@ def detect_hills_fast(list data_for_analyse_tmp, float hill_mass_accuracy, float
                             if want_mass_diff:
                                 v_tmd[ntmd] = best_md
                                 ntmd += 1
+                    elif gaps and have_prev2 and nb_prev2 > 0:
+                        ne = 0
+                        b = v_head2[fmv - bmin]
+                        if b >= 0:
+                            ebuf[ne] = b; ne += 1
+                        for kw in range(1, nwin + 1):
+                            b = v_head2[fmv - kw - bmin]
+                            if b >= 0:
+                                ebuf[ne] = b; ne += 1
+                            b = v_head2[fmv + kw - bmin]
+                            if b >= 0:
+                                ebuf[ne] = b; ne += 1
+                        best_int2 = 0
+                        best_prev2 = -1
+                        found2 = False
+                        for e in range(ne):
+                            cst = bstart2[ebuf[e]]
+                            cln = blen2[ebuf[e]]
+                            for q in range(cln):
+                                ip = pool2[cst + q]
+                                if cont2[ip] or banned2[ip]:
+                                    continue
+                                if use_im and not (fabs(imc - p2_im[ip]) <= imtol):
+                                    continue
+                                d = <float>((mzc64 - p2_mz[ip]) / mzc64 * 1e6)
+                                d = <float>(<double>d * koef)
+                                cmd = fabs(d)
+                                ci = p2_it[ip]
+                                if cmd <= htol and ci >= best_int2:
+                                    best_int2 = ci
+                                    best_prev2 = ip
+                                    found2 = True
+                        if found2:
+                            v_hills[s0 + idx] = v_hills[sp2 + best_prev2]
+                            banned2[best_prev2] = 1
+
+            # the previous frame's buckets become the frame-before-previous ones,
+            # with the marks of which of its peaks this frame continued
+            if gaps:
+                for b in range(nb_prev2):
+                    v_head2[bkey2[b] - bmin] = -1
+                nb_prev2 = nb_prev if have_prev else 0
+                for b in range(nb_prev2):
+                    bkey2[b] = bkey[b]
+                    bstart2[b] = bstart[b]
+                    blen2[b] = blen[b]
+                    v_head2[bkey[b] - bmin] = b
+                if have_prev:
+                    np_prev2 = np_prev
+                    for i in range(np_prev):
+                        pool2[i] = pool[i]
+                        cont2[i] = banned[i]
+                    p2_mz = p_mz
+                    p2_it = p_it
+                    p2_im = p_im
+                    sp2 = sp
+                    have_prev2 = True
 
             # buckets of the current frame (become the 'previous' buckets)
             for b in range(nb_prev):
